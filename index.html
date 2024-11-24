@@ -5,37 +5,84 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ječná Docs</title>
     <style>
-        #editor { width: 100%; height: 400px; border: 1px solid #ccc; }
-        #status { margin-top: 10px; }
-        #users { margin-top: 10px; }
+        #wrapper {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            border: 1px solid #ccc;
+            font-family: monospace; /* Zajištění pevné šířky znaků */
+        }
+        #highlights {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 1;
+            font-family: monospace;
+            color: transparent;
+        }
+        #editor {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            background: transparent;
+            caret-color: black;
+            font-family: monospace;
+        }
+        .highlight {
+            background-color: rgba(0, 255, 0, 0.3); /* Zelená průhledná */
+        }
         .cursor {
             position: absolute;
             width: 2px;
             height: 20px;
-            z-index: 1000;
+            z-index: 3;
+            background-color: red; /* Barva kurzoru */
+        }
+        .mouse-pointer {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: red; /* Výchozí barva ukazatele myši */
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 10;
         }
     </style>
 </head>
 <body>
 <h1>Ječná Docs</h1>
-<textarea id="editor" placeholder="Start typing..."></textarea>
+<div id="wrapper">
+    <div id="highlights"></div>
+    <textarea id="editor" placeholder="Start typing..."></textarea>
+</div>
 <div id="status">Disconnected</div>
 <div id="users">Connected users: None</div>
 
 <script>
     const ws = new WebSocket("ws://localhost:8080");
     const editor = document.getElementById('editor');
+    const highlightsDiv = document.getElementById('highlights');
     const status = document.getElementById('status');
     const usersDiv = document.getElementById('users');
-    const cursors = {}; // Pro uložení kurzorů ostatních uživatelů
-
-    let userId;
+    const pointers = {}; // Ukládá ukazatele myši ostatních uživatelů
+    const cursors = {}; // Kurzory ostatních uživatelů
 
     ws.onopen = () => {
+        console.log('Connected to server');
         status.textContent = "Connected to server";
     };
 
     ws.onclose = () => {
+        console.log('Disconnected from server');
         status.textContent = "Disconnected from server";
     };
 
@@ -43,38 +90,34 @@
         const data = JSON.parse(event.data);
 
         if (data.type === 'init') {
-            editor.value = data.text; // Načtení inicializovaného textu
+            editor.value = data.text;
             usersDiv.textContent = `Connected users: ${data.users.map(u => u.userId).join(', ')}`;
         }
 
-        if (data.type === 'update_text' && data.userId !== userId) {
-            editor.value = data.text; // Aktualizace textu od ostatních uživatelů
+        if (data.type === 'update_text') {
+            editor.value = data.text;
         }
 
-        if (data.type === 'user_connected') {
-            usersDiv.textContent += `, ${data.userId}`;
+        if (data.type === 'text_selection') {
+            const start = editor.value.slice(0, data.range.start).replace(/ /g, '\u00A0');
+            const selected = editor.value.slice(data.range.start, data.range.end).replace(/ /g, '\u00A0');
+            const end = editor.value.slice(data.range.end).replace(/ /g, '\u00A0');
+
+            highlightsDiv.innerHTML = `${start}<span class="highlight" style="background-color: ${data.userColor};">${selected}</span>${end}`;
         }
 
-        if (data.type === 'user_disconnected') {
-            usersDiv.textContent = usersDiv.textContent.replace(`, ${data.userId}`, '');
-            if (cursors[data.userId]) {
-                cursors[data.userId].remove();
-                delete cursors[data.userId];
+        if (data.type === 'mouse_position') {
+            if (!pointers[data.userId]) {
+                const pointer = document.createElement('div');
+                pointer.className = 'mouse-pointer';
+                pointer.style.backgroundColor = data.userColor; // Barva uživatele
+                document.body.appendChild(pointer);
+                pointers[data.userId] = pointer;
             }
-        }
 
-        if (data.type === 'cursor_position') {
-            if (!cursors[data.userId]) {
-                const cursor = document.createElement('div');
-                cursor.className = 'cursor';
-                cursor.style.backgroundColor = data.userColor;
-                document.body.appendChild(cursor);
-                cursors[data.userId] = cursor;
-            }
-            const rect = editor.getBoundingClientRect();
-            const cursor = cursors[data.userId];
-            cursor.style.left = `${rect.left + data.position.x}px`;
-            cursor.style.top = `${rect.top + data.position.y}px`;
+            const pointer = pointers[data.userId];
+            pointer.style.left = `${data.position.x}px`;
+            pointer.style.top = `${data.position.y}px`;
         }
     };
 
@@ -82,11 +125,18 @@
         ws.send(JSON.stringify({ type: 'update_text', text: editor.value })); // Odeslání textu
     });
 
+    editor.addEventListener('mouseup', () => {
+        const range = {
+            start: editor.selectionStart,
+            end: editor.selectionEnd
+        };
+        ws.send(JSON.stringify({ type: 'text_selection', range })); // Odeslání zvýraznění
+    });
+
     editor.addEventListener('mousemove', (event) => {
-        const rect = editor.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        ws.send(JSON.stringify({ type: 'cursor_position', position: { x, y } })); // Odeslání pozice kurzoru
+        const x = event.clientX;
+        const y = event.clientY;
+        ws.send(JSON.stringify({ type: 'mouse_position', position: { x, y } })); // Odeslání pozice myši
     });
 </script>
 </body>
