@@ -10,21 +10,7 @@
             width: 100%;
             height: 400px;
             border: 1px solid #ccc;
-            font-family: monospace; /* Zajištění pevné šířky znaků */
-        }
-        #highlights {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            overflow: hidden;
-            pointer-events: none;
-            z-index: 1;
             font-family: monospace;
-            color: transparent;
         }
         #editor {
             position: absolute;
@@ -36,22 +22,20 @@
             background: transparent;
             caret-color: black;
             font-family: monospace;
+            line-height: 1.5;
         }
-        .highlight {
-            background-color: rgba(0, 255, 0, 0.3); /* Zelená průhledná */
-        }
-        .cursor {
+        #canvas {
             position: absolute;
-            width: 2px;
-            height: 20px;
-            z-index: 3;
-            background-color: red; /* Barva kurzoru */
+            top: 0;
+            left: 0;
+            z-index: 1;
+            pointer-events: none;
         }
         .mouse-pointer {
             position: absolute;
             width: 10px;
             height: 10px;
-            background-color: red; /* Výchozí barva ukazatele myši */
+            background-color: red;
             border-radius: 50%;
             pointer-events: none;
             z-index: 10;
@@ -61,7 +45,7 @@
 <body>
 <h1>Ječná Docs</h1>
 <div id="wrapper">
-    <div id="highlights"></div>
+    <canvas id="canvas"></canvas>
     <textarea id="editor" placeholder="Start typing..."></textarea>
 </div>
 <div id="status">Disconnected</div>
@@ -70,11 +54,19 @@
 <script>
     const ws = new WebSocket("ws://localhost:8080");
     const editor = document.getElementById('editor');
-    const highlightsDiv = document.getElementById('highlights');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
     const status = document.getElementById('status');
     const usersDiv = document.getElementById('users');
-    const pointers = {}; // Ukládá ukazatele myši ostatních uživatelů
-    const cursors = {}; // Kurzory ostatních uživatelů
+    const pointers = {}; // Ukazatele myši ostatních uživatelů
+
+    // Nastavení rozměrů canvasu podle textového pole
+    const updateCanvasSize = () => {
+        canvas.width = editor.offsetWidth;
+        canvas.height = editor.offsetHeight;
+    };
+
+    updateCanvasSize();
 
     ws.onopen = () => {
         console.log('Connected to server');
@@ -94,23 +86,20 @@
             usersDiv.textContent = `Connected users: ${data.users.map(u => u.userId).join(', ')}`;
         }
 
-        if (data.type === 'update_text') {
+        if (data.type === 'update_text' && data.userId !== undefined) {
+            // Aktualizace textu od jiného uživatele
             editor.value = data.text;
         }
 
         if (data.type === 'text_selection') {
-            const start = editor.value.slice(0, data.range.start).replace(/ /g, '\u00A0');
-            const selected = editor.value.slice(data.range.start, data.range.end).replace(/ /g, '\u00A0');
-            const end = editor.value.slice(data.range.end).replace(/ /g, '\u00A0');
-
-            highlightsDiv.innerHTML = `${start}<span class="highlight" style="background-color: ${data.userColor};">${selected}</span>${end}`;
+            renderHighlights(data.range, data.userColor);
         }
 
         if (data.type === 'mouse_position') {
             if (!pointers[data.userId]) {
                 const pointer = document.createElement('div');
                 pointer.className = 'mouse-pointer';
-                pointer.style.backgroundColor = data.userColor; // Barva uživatele
+                pointer.style.backgroundColor = data.userColor;
                 document.body.appendChild(pointer);
                 pointers[data.userId] = pointer;
             }
@@ -121,8 +110,52 @@
         }
     };
 
+    // Funkce pro vykreslení zvýraznění na canvas
+    const renderHighlights = (range, color) => {
+        const lineHeight = parseFloat(getComputedStyle(editor).lineHeight);
+        const padding = parseFloat(getComputedStyle(editor).paddingLeft);
+
+        // Vypočítání souřadnic
+        const start = getCaretCoordinates(editor, range.start);
+        const end = getCaretCoordinates(editor, range.end);
+
+        // Vymazání canvasu
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Vykreslení zvýraznění
+        ctx.fillStyle = color;
+        ctx.fillRect(start.left + padding, start.top, end.left - start.left, lineHeight);
+    };
+
+    // Výpočet pozice kurzoru v textarea
+    const getCaretCoordinates = (textarea, position) => {
+        const div = document.createElement('div');
+        const style = window.getComputedStyle(textarea);
+
+        // Zkopírování stylu textarea do divu
+        for (const key of style) {
+            div.style[key] = style[key];
+        }
+
+        div.style.position = 'absolute';
+        div.style.whiteSpace = 'pre-wrap';
+        div.style.visibility = 'hidden';
+
+        // Přidání textu
+        div.textContent = textarea.value.slice(0, position);
+        const span = document.createElement('span');
+        span.textContent = '|';
+        div.appendChild(span);
+
+        document.body.appendChild(div);
+        const rect = span.getBoundingClientRect();
+        document.body.removeChild(div);
+
+        return { left: rect.left, top: rect.top };
+    };
+
     editor.addEventListener('input', () => {
-        ws.send(JSON.stringify({ type: 'update_text', text: editor.value })); // Odeslání textu
+        ws.send(JSON.stringify({ type: 'update_text', text: editor.value })); // Odeslání textu na server
     });
 
     editor.addEventListener('mouseup', () => {
@@ -138,6 +171,8 @@
         const y = event.clientY;
         ws.send(JSON.stringify({ type: 'mouse_position', position: { x, y } })); // Odeslání pozice myši
     });
+
+    window.addEventListener('resize', updateCanvasSize);
 </script>
 </body>
 </html>
