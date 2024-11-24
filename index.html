@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ječná Docs</title>
+    <style>
+        #editor { width: 100%; height: 400px; border: 1px solid #ccc; }
+        #status { margin-top: 10px; }
+        #users { margin-top: 10px; }
+        .cursor {
+            position: absolute;
+            width: 2px;
+            height: 20px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+<h1>Ječná Docs</h1>
+<textarea id="editor" placeholder="Start typing..."></textarea>
+<div id="status">Disconnected</div>
+<div id="users">Connected users: None</div>
+
+<script>
+    const ws = new WebSocket("ws://localhost:8080");
+    const editor = document.getElementById('editor');
+    const status = document.getElementById('status');
+    const usersDiv = document.getElementById('users');
+    const cursors = {}; // Pro uložení kurzorů ostatních uživatelů
+
+    let userId;
+
+    ws.onopen = () => {
+        status.textContent = "Connected to server";
+    };
+
+    ws.onclose = () => {
+        status.textContent = "Disconnected from server";
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'init') {
+            editor.value = data.text; // Načtení inicializovaného textu
+            usersDiv.textContent = `Connected users: ${data.users.map(u => u.userId).join(', ')}`;
+        }
+
+        if (data.type === 'update_text' && data.userId !== userId) {
+            editor.value = data.text; // Aktualizace textu od ostatních uživatelů
+        }
+
+        if (data.type === 'user_connected') {
+            usersDiv.textContent += `, ${data.userId}`;
+        }
+
+        if (data.type === 'user_disconnected') {
+            usersDiv.textContent = usersDiv.textContent.replace(`, ${data.userId}`, '');
+            if (cursors[data.userId]) {
+                cursors[data.userId].remove();
+                delete cursors[data.userId];
+            }
+        }
+
+        if (data.type === 'cursor_position') {
+            if (!cursors[data.userId]) {
+                const cursor = document.createElement('div');
+                cursor.className = 'cursor';
+                cursor.style.backgroundColor = data.userColor;
+                document.body.appendChild(cursor);
+                cursors[data.userId] = cursor;
+            }
+            const rect = editor.getBoundingClientRect();
+            const cursor = cursors[data.userId];
+            cursor.style.left = `${rect.left + data.position.x}px`;
+            cursor.style.top = `${rect.top + data.position.y}px`;
+        }
+    };
+
+    editor.addEventListener('input', () => {
+        ws.send(JSON.stringify({ type: 'update_text', text: editor.value })); // Odeslání textu
+    });
+
+    editor.addEventListener('mousemove', (event) => {
+        const rect = editor.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        ws.send(JSON.stringify({ type: 'cursor_position', position: { x, y } })); // Odeslání pozice kurzoru
+    });
+</script>
+</body>
+</html>
